@@ -13,11 +13,12 @@ import { ObjectTreePanel } from "./ObjectTreePanel";
 import { SessionMarkersDialog } from "./SessionMarkersDialog";
 import { useSessionSettings } from "./indicators/session-settings-store";
 import { ThemeToggle } from "./ThemeToggle";
-import { SYMBOLS, TIMEFRAMES, TIMEFRAME_SECONDS, type Symbol, type Timeframe } from "./constants";
+import { TIMEFRAMES, TIMEFRAME_SECONDS, type Symbol, type Timeframe } from "./constants";
 import type { DrawingLine, DrawingTool, MagnetMode } from "./drawings/constants";
 import { useChartDrawings } from "./hooks/useChartDrawings";
 import { useLineAlerts } from "./hooks/useLineAlerts";
 import { useLivePrice, useMarketData } from "./hooks/useMarketData";
+import { useSymbols } from "./hooks/useSymbols";
 import type { DrawingToolsManager } from "./lib/chart-plugins/drawing-tools/manager";
 import { setFeedPaused } from "./services/demo/feed";
 import { usePaper } from "./services/paper-engine";
@@ -76,8 +77,9 @@ export default function Terminal() {
     replayActive,
     replayTime,
   } = useTerminalState();
-  const livePrice = useLivePrice(symbol);
+  const livePrice = useLivePrice(symbol, dataSource === "live");
   const { candles: fullCandles, real, loading } = useMarketData(symbol, timeframe, dataSource);
+  const symbolOptions = useSymbols(dataSource);
   const { drawings, addDrawing, updateDrawing, removeDrawing, undo, redo } =
     useChartDrawings(symbol);
 
@@ -89,6 +91,14 @@ export default function Terminal() {
       : fullCandles;
   const candles = sliced.length > 0 ? sliced : fullCandles.slice(0, 1);
   const chartPrice = replayActive ? (candles.at(-1)?.close ?? null) : livePrice;
+
+  // Live mode only serves /api/symbols tickers — fall back to BTCUSD when
+  // the current symbol isn't available there.
+  useEffect(() => {
+    if (dataSource === "live" && !symbolOptions.includes(symbol)) {
+      setSymbol("BTCUSD");
+    }
+  }, [dataSource, symbol, symbolOptions, setSymbol]);
 
   // Pause the live tick feed while replaying; always resume on unmount.
   useEffect(() => {
@@ -188,11 +198,13 @@ export default function Terminal() {
   };
 
   const caption =
-    dataSource === "bundled" && real
-      ? "Bundled real history — timestamps remapped to now."
-      : dataSource === "bundled"
-        ? "Bundled files missing — synthetic fallback."
-        : "Synthetic stub — deterministic, swapped with API later.";
+    dataSource === "live"
+      ? "Live via Tradeye API (biquote.io)."
+      : dataSource === "bundled" && real
+        ? "Bundled real history — timestamps remapped to now."
+        : dataSource === "bundled"
+          ? "Bundled files missing — synthetic fallback."
+          : "Synthetic stub — deterministic, swapped with API later.";
 
   return (
     <div className="flex min-h-screen flex-col bg-background text-foreground">
@@ -202,7 +214,7 @@ export default function Terminal() {
           label="Symbol"
           value={symbol}
           onChange={(v) => setSymbol(v as Symbol)}
-          options={SYMBOLS}
+          options={symbolOptions}
         />
         <Select
           label="Timeframe"
@@ -214,9 +226,11 @@ export default function Terminal() {
           label="Data"
           value={dataSource}
           onChange={(v) =>
-            v === "synthetic" || v === "bundled" ? setDataSource(v) : undefined
+            v === "synthetic" || v === "bundled" || v === "live"
+              ? setDataSource(v)
+              : undefined
           }
-          options={["synthetic", "bundled"] as const}
+          options={["synthetic", "bundled", "live"] as const}
         />
         <span
           aria-live="polite"

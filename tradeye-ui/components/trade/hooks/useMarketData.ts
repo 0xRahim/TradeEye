@@ -8,7 +8,7 @@ import type { Candle } from "../services/types";
 
 export interface MarketData {
   candles: Candle[];
-  /** True when bars came from bundled real history. */
+  /** True when bars came from real history (bundled files or live API). */
   real: boolean;
   loading: boolean;
 }
@@ -58,7 +58,7 @@ export function useMarketData(
   return state;
 }
 
-export function useLivePrice(symbol: Symbol): number | null {
+export function useLivePrice(symbol: Symbol, live = false): number | null {
   const [activeSymbol, setActiveSymbol] = useState(symbol);
   const [price, setPrice] = useState<number | null>(null);
 
@@ -68,8 +68,8 @@ export function useLivePrice(symbol: Symbol): number | null {
   }
 
   useEffect(() => {
-    return ws.subscribe(symbol, (tick) => setPrice(tick.price));
-  }, [symbol]);
+    return ws.subscribe(symbol, (tick) => setPrice(tick.price), { live });
+  }, [symbol, live]);
 
   return price;
 }

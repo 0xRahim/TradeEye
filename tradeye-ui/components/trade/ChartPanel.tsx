@@ -77,6 +77,38 @@ function readVars(): Record<string, string> {
   };
 }
 
+/**
+ * Candle-only palette (grey up / black-or-white down, monochrome wicks and
+ * borders). Deliberately separate from the `--up`/`--down` tokens, which
+ * keep driving P&L text and ticket UI. Dark mode uses white instead of
+ * black so down candles stay visible on the dark background.
+ */
+export function candleColors(): { up: string; down: string; wickBorder: string } {
+  const dark = document.documentElement.classList.contains("dark");
+  return {
+    up: "#787b86",
+    down: dark ? "#ffffff" : "#000000",
+    wickBorder: dark ? "#ffffff" : "#000000",
+  };
+}
+
+export function applyCandleColors(
+  candleSeries: ISeriesApi<"Candlestick">,
+  precision: number,
+): void {
+  const c = candleColors();
+  candleSeries.applyOptions({
+    upColor: c.up,
+    downColor: c.down,
+    wickUpColor: c.wickBorder,
+    wickDownColor: c.wickBorder,
+    borderVisible: true,
+    borderUpColor: c.wickBorder,
+    borderDownColor: c.wickBorder,
+    priceFormat: { type: "price", precision, minMove: 1 / 10 ** precision },
+  });
+}
+
 function formatOhlc(symbol: string, bar: { open: number; high: number; low: number; close: number }): string {
   const f = (n: number) =>
     n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 });
@@ -147,8 +179,8 @@ export default function ChartPanel({
         attributionLogo: true,
       },
       grid: {
-        vertLines: { color: vars.border },
-        horzLines: { color: vars.border },
+        vertLines: { color: vars.border, visible: false },
+        horzLines: { color: vars.border, visible: false },
       },
       crosshair: { mode: CrosshairMode.Normal },
       rightPriceScale: { borderColor: vars.border },
@@ -241,11 +273,14 @@ export default function ChartPanel({
           background: { type: ColorType.Solid, color: v.background },
           textColor: v.muted,
         },
-        grid: { vertLines: { color: v.border }, horzLines: { color: v.border } },
+        grid: {
+          vertLines: { color: v.border, visible: false },
+          horzLines: { color: v.border, visible: false },
+        },
         rightPriceScale: { borderColor: v.border },
         timeScale: { borderColor: v.border },
       });
-      candleSeries.applyOptions({ upColor: v.up, downColor: v.down });
+      applyCandleColors(candleSeries, precisionFor(barsRef.current));
     });
     themeObs.observe(document.documentElement, { attributes: true });
 
@@ -329,16 +364,8 @@ export default function ChartPanel({
     const justEnteredReplay = replayActive && !wasReplayActiveRef.current;
 
     barsRef.current = [...candles];
-    const vars = readVars();
     const precision = precisionFor(candles);
-    candleSeries.applyOptions({
-      upColor: vars.up,
-      downColor: vars.down,
-      wickUpColor: vars.up,
-      wickDownColor: vars.down,
-      borderVisible: false,
-      priceFormat: { type: "price", precision, minMove: 1 / 10 ** precision },
-    });
+    applyCandleColors(candleSeries, precision);
     candleSeries.setData(
       candles.map((b) => ({
         time: b.time as UTCTimestamp,

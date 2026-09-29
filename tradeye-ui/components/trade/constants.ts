@@ -8,9 +8,15 @@ export const SYMBOLS = [
   "BNBUSD",
   "XRPUSD",
   "ADAUSD",
+  "EURUSD",
+  "GBPUSD",
+  "XAUUSD",
 ] as const;
 
 export type Symbol = (typeof SYMBOLS)[number];
+
+/** Tickers served by the Tradeye price API (/api/symbols). */
+export const LIVE_SYMBOLS = ["BTCUSD", "EURUSD", "GBPUSD", "XAUUSD"] as const;
 
 export const TIMEFRAMES = [
   "1m",
@@ -37,4 +43,4 @@ export const TIMEFRAME_SECONDS: Record<Timeframe, number> = {
   "1w": 604800,
 };
 
-export type DataSource = "synthetic" | "bundled";
+export type DataSource = "synthetic" | "bundled" | "live";

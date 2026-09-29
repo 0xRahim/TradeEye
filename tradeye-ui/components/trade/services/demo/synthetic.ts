@@ -14,6 +14,9 @@ const BASE_PRICE: Record<Symbol, number> = {
   BNBUSD: 598,
   XRPUSD: 0.62,
   ADAUSD: 0.58,
+  EURUSD: 1.13,
+  GBPUSD: 1.32,
+  XAUUSD: 4141,
 };
 
 /** Bars per TF returned by the stub. */

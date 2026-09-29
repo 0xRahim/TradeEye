@@ -20,7 +20,7 @@ import { useLineAlerts } from "./hooks/useLineAlerts";
 import { useLivePrice, useMarketData } from "./hooks/useMarketData";
 import { useSymbols } from "./hooks/useSymbols";
 import type { DrawingToolsManager } from "./lib/chart-plugins/drawing-tools/manager";
-import { setFeedPaused } from "./services/demo/feed";
+import { setFeedPaused } from "./services/ws";
 import { usePaper } from "./services/paper-engine";
 import { cx } from "./lib/cx";
 
@@ -70,17 +70,15 @@ export default function Terminal() {
   const {
     symbol,
     timeframe,
-    dataSource,
     setSymbol,
     setTimeframe,
-    setDataSource,
     replayActive,
     replayTime,
   } = useTerminalState();
-  const livePrice = useLivePrice(symbol, dataSource === "live");
-  const { candles: fullCandles, real, loading, loadOlder, loadingOlder, olderExhausted, loadWindow } =
-    useMarketData(symbol, timeframe, dataSource);
-  const symbolOptions = useSymbols(dataSource);
+  const livePrice = useLivePrice(symbol);
+  const { candles: fullCandles, loading, loadOlder, loadingOlder, olderExhausted, loadWindow } =
+    useMarketData(symbol, timeframe);
+  const symbolOptions = useSymbols();
   const { drawings, addDrawing, updateDrawing, removeDrawing, undo, redo } =
     useChartDrawings(symbol);
 
@@ -93,13 +91,13 @@ export default function Terminal() {
   const candles = sliced.length > 0 ? sliced : fullCandles.slice(0, 1);
   const chartPrice = replayActive ? (candles.at(-1)?.close ?? null) : livePrice;
 
-  // Live mode only serves /api/symbols tickers — fall back to BTCUSD when
-  // the current symbol isn't available there.
+  // The API may serve a subset of tickers — fall back to BTCUSD when the
+  // current symbol isn't available.
   useEffect(() => {
-    if (dataSource === "live" && !symbolOptions.includes(symbol)) {
+    if (!symbolOptions.includes(symbol)) {
       setSymbol("BTCUSD");
     }
-  }, [dataSource, symbol, symbolOptions, setSymbol]);
+  }, [symbol, symbolOptions, setSymbol]);
 
   // Pause the live tick feed while replaying; always resume on unmount.
   useEffect(() => {
@@ -118,7 +116,7 @@ export default function Terminal() {
   useEffect(() => {
     const prev = replayTfRef.current;
     replayTfRef.current = { tf: timeframe, active: replayActive };
-    if (prev.tf !== timeframe && replayActive && replayTime != null && dataSource === "live") {
+    if (prev.tf !== timeframe && replayActive && replayTime != null) {
       void loadWindowRef.current(replayTime);
     }
   });
@@ -215,13 +213,7 @@ export default function Terminal() {
   };
 
   const caption =
-    dataSource === "live"
-      ? `Live via Tradeye API (biquote.io).${olderExhausted ? " Earliest available history reached." : ""}`
-      : dataSource === "bundled" && real
-        ? "Bundled real history — timestamps remapped to now."
-        : dataSource === "bundled"
-          ? "Bundled files missing — synthetic fallback."
-          : "Synthetic stub — deterministic, swapped with API later.";
+    `Live via Tradeye API.${olderExhausted ? " Earliest available history reached." : ""}`;
 
   return (
     <div className="flex min-h-screen flex-col bg-background text-foreground">
@@ -238,16 +230,6 @@ export default function Terminal() {
           value={timeframe}
           onChange={(v) => setTimeframe(v as Timeframe)}
           options={TIMEFRAMES}
-        />
-        <Select
-          label="Data"
-          value={dataSource}
-          onChange={(v) =>
-            v === "synthetic" || v === "bundled" || v === "live"
-              ? setDataSource(v)
-              : undefined
-          }
-          options={["synthetic", "bundled", "live"] as const}
         />
         <span
           aria-live="polite"
@@ -347,7 +329,7 @@ export default function Terminal() {
               accountEquity={equity}
               drawingCallbacks={callbacks}
               managerRef={managerRef}
-              onNeedOlder={dataSource === "live" ? loadOlder : null}
+              onNeedOlder={loadOlder}
               loadingOlder={loadingOlder}
               olderExhausted={olderExhausted}
             />
@@ -421,7 +403,6 @@ export default function Terminal() {
             <ReplayBar
               bars={fullCandles}
               loadWindow={loadWindow}
-              canJump={dataSource === "live"}
             />
           </div>
         </main>

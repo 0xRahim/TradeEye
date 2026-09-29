@@ -43,13 +43,10 @@ function countAtOrBefore(bars: Candle[], t: number): number {
 export function ReplayBar({
   bars,
   loadWindow,
-  canJump,
 }: {
   bars: Candle[];
-  /** Replace history with a window ending at `to` (live jump-to-date). */
+  /** Replace history with a window ending at `to` (jump-to-date). */
   loadWindow: (to: number) => Promise<Candle[]>;
-  /** False for fixed local sources (synthetic/bundled) — clamps as before. */
-  canJump: boolean;
 }) {
   const {
     replayActive,
@@ -108,8 +105,8 @@ export function ReplayBar({
       if (ts === null || bars.length === 0 || jumping) return;
       const first = bars[0]!.time;
       const last = bars[bars.length - 1]!.time;
-      if (!canJump || (ts >= first && ts <= last)) {
-        enterReplay(Math.min(Math.max(ts, first), last));
+      if (ts >= first && ts <= last) {
+        enterReplay(ts);
         return;
       }
       // Outside loaded history: fetch a window ending at the chosen moment,

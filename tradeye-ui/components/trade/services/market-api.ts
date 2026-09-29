@@ -1,9 +1,9 @@
 /**
  * Client for the Tradeye price API (`/api/symbols`, `/api/quote`,
  * `/api/candles`). Base URL comes from `NEXT_PUBLIC_API_URL` (falls back to
- * the local API dev server). Only used when DataSource is "live".
+ * the local API dev server). The sole market-data source for the terminal.
  */
-import { LIVE_SYMBOLS, type Symbol, type Timeframe } from "../constants";
+import { SYMBOLS, type Symbol, type Timeframe } from "../constants";
 import type { Candle } from "./types";
 
 function apiBaseUrl(): string {
@@ -15,7 +15,7 @@ function apiBaseUrl(): string {
 function isSymbol(v: unknown): v is Symbol {
   return (
     typeof v === "string" &&
-    (LIVE_SYMBOLS as readonly string[]).includes(v.toUpperCase())
+    (SYMBOLS as readonly string[]).includes(v.toUpperCase())
   );
 }
 
@@ -45,7 +45,7 @@ async function getJson(path: string): Promise<unknown> {
   return body;
 }
 
-/** Tickers available live. Falls back to the static list when offline. */
+/** Tickers available. Falls back to the static list when offline. */
 export async function fetchSymbols(): Promise<Symbol[]> {
   try {
     const body = (await getJson("/api/symbols")) as {
@@ -59,9 +59,9 @@ export async function fetchSymbols(): Promise<Symbol[]> {
         out.push(name.toUpperCase() as Symbol);
       }
     }
-    return out.length > 0 ? out : [...LIVE_SYMBOLS];
+    return out.length > 0 ? out : [...SYMBOLS];
   } catch {
-    return [...LIVE_SYMBOLS];
+    return [...SYMBOLS];
   }
 }
 

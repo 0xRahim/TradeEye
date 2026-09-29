@@ -1,22 +1,10 @@
-// Instrument + timeframe constants. Values mirror the OpenCharts demo set
-// so the future Binance-JSON loader and API seam stay compatible.
+// Instrument + timeframe constants. Symbols are the tickers served by the
+// Tradeye price API (/api/symbols); the dropdown refreshes from there with
+// this list as fallback.
 
-export const SYMBOLS = [
-  "BTCUSD",
-  "ETHUSD",
-  "SOLUSD",
-  "BNBUSD",
-  "XRPUSD",
-  "ADAUSD",
-  "EURUSD",
-  "GBPUSD",
-  "XAUUSD",
-] as const;
+export const SYMBOLS = ["BTCUSD", "EURUSD", "GBPUSD", "XAUUSD"] as const;
 
 export type Symbol = (typeof SYMBOLS)[number];
-
-/** Tickers served by the Tradeye price API (/api/symbols). */
-export const LIVE_SYMBOLS = ["BTCUSD", "EURUSD", "GBPUSD", "XAUUSD"] as const;
 
 export const TIMEFRAMES = [
   "1m",
@@ -31,7 +19,7 @@ export const TIMEFRAMES = [
 
 export type Timeframe = (typeof TIMEFRAMES)[number];
 
-/** Seconds per timeframe bar. Used to slice/aggregate the master 1m series. */
+/** Seconds per timeframe bar. */
 export const TIMEFRAME_SECONDS: Record<Timeframe, number> = {
   "1m": 60,
   "5m": 300,
@@ -42,5 +30,3 @@ export const TIMEFRAME_SECONDS: Record<Timeframe, number> = {
   "1d": 86400,
   "1w": 604800,
 };
-
-export type DataSource = "synthetic" | "bundled" | "live";

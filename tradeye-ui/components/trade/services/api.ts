@@ -1,12 +1,11 @@
 /**
  * REST-shaped facade. UI code talks only to this module (and ws.ts) —
- * never to `./demo/*` directly — so the future backend swap touches
- * just these two files.
+ * never to feed internals directly — so a backend swap touches just
+ * these two files. All market data is live from the Tradeye price API.
  */
-import { SYMBOLS, type DataSource, type Symbol, type Timeframe } from "../constants";
+import { SYMBOLS, type Symbol, type Timeframe } from "../constants";
 import type { DrawingLine } from "../drawings/constants";
-import { getCandles as demoGetCandles, type CandleResult } from "./demo/candles";
-import { fetchCandles as fetchLiveCandles } from "./market-api";
+import { fetchCandles } from "./market-api";
 import { drawingsStore } from "./drawings-store";
 import type { Candle } from "./types";
 
@@ -14,26 +13,29 @@ export interface SymbolInfo {
   symbol: Symbol;
 }
 
+export interface CandleResult {
+  candles: Candle[];
+  /** Always true — every bar comes from real history. */
+  real: boolean;
+}
+
 export const api = {
   getSymbols(): SymbolInfo[] {
     return SYMBOLS.map((symbol) => ({ symbol }));
   },
 
-  getCandles(
-    symbol: Symbol,
-    timeframe: Timeframe,
-    source: DataSource,
-  ): Promise<CandleResult> {
-    return demoGetCandles(symbol, timeframe, source);
+  async getCandles(symbol: Symbol, timeframe: Timeframe): Promise<CandleResult> {
+    const candles = await fetchCandles(symbol, timeframe);
+    return { candles, real: true };
   },
 
-  /** Older live chunk for scroll-left backfill (live source only). */
+  /** Older live chunk for scroll-left backfill. */
   getOlderCandles(
     symbol: Symbol,
     timeframe: Timeframe,
     range: { from: string; to: string },
   ): Promise<Candle[]> {
-    return fetchLiveCandles(symbol, timeframe, range);
+    return fetchCandles(symbol, timeframe, range);
   },
 
   chartDrawings: {

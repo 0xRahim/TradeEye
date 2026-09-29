@@ -2,7 +2,6 @@ import { create } from "zustand";
 import {
   SYMBOLS,
   TIMEFRAMES,
-  type DataSource,
   type Symbol,
   type Timeframe,
 } from "./constants";
@@ -10,10 +9,8 @@ import {
 interface TerminalState {
   symbol: Symbol;
   timeframe: Timeframe;
-  dataSource: DataSource;
   setSymbol: (s: Symbol) => void;
   setTimeframe: (t: Timeframe) => void;
-  setDataSource: (d: DataSource) => void;
   // ── Bar replay (P5). `cutoff` is the moment replay starts at;
   // `replayTime` is the currently revealed moment. Every timeframe shows
   // bars with time <= replayTime, so all TFs stay synced by construction.
@@ -40,14 +37,12 @@ function isTimeframe(v: string): v is Timeframe {
 export const useTerminal = create<TerminalState>((set) => ({
   symbol: "BTCUSD",
   timeframe: "1h",
-  dataSource: "synthetic",
   setSymbol: (symbol) => {
     if (isSymbol(symbol)) set({ symbol });
   },
   setTimeframe: (timeframe) => {
     if (isTimeframe(timeframe)) set({ timeframe });
   },
-  setDataSource: (dataSource) => set({ dataSource }),
   replayActive: false,
   replayCutoff: null,
   replayTime: null,

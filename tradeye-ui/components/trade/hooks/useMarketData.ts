@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { TIMEFRAME_SECONDS, type DataSource, type Symbol, type Timeframe } from "../constants";
+import { TIMEFRAME_SECONDS, type Symbol, type Timeframe } from "../constants";
 import { api } from "../services/api";
 import { ws } from "../services/ws";
 import { mergeCandles } from "../lib/candle-builder";
@@ -12,7 +12,7 @@ export const BACKFILL_CHUNK = 1000;
 
 export interface MarketData {
   candles: Candle[];
-  /** True when bars came from real history (bundled files or live API). */
+  /** True when bars came from real history. Always true (live-only feed). */
   real: boolean;
   loading: boolean;
   /** Prepend the next older live chunk (no-op unless source is "live"). */
@@ -31,7 +31,6 @@ export interface MarketData {
 interface Request {
   symbol: Symbol;
   timeframe: Timeframe;
-  source: DataSource;
 }
 
 const EMPTY: MarketData = {
@@ -49,12 +48,8 @@ interface BackfillState {
   loading: boolean;
 }
 
-export function useMarketData(
-  symbol: Symbol,
-  timeframe: Timeframe,
-  source: DataSource,
-): MarketData {
-  const [request, setRequest] = useState<Request>({ symbol, timeframe, source });
+export function useMarketData(symbol: Symbol, timeframe: Timeframe): MarketData {
+  const [request, setRequest] = useState<Request>({ symbol, timeframe });
   const [state, setState] = useState<MarketData>(EMPTY);
   const [backfill, setBackfill] = useState<BackfillState>({
     exhausted: false,
@@ -63,12 +58,8 @@ export function useMarketData(
 
   // Reset to loading during render when inputs change (React-endorsed
   // derived-state pattern — keeps the reset out of effects).
-  if (
-    request.symbol !== symbol ||
-    request.timeframe !== timeframe ||
-    request.source !== source
-  ) {
-    setRequest({ symbol, timeframe, source });
+  if (request.symbol !== symbol || request.timeframe !== timeframe) {
+    setRequest({ symbol, timeframe });
     setState(EMPTY);
     setBackfill({ exhausted: false, loading: false });
   }
@@ -92,7 +83,7 @@ export function useMarketData(
   useEffect(() => {
     let live = true;
     api
-      .getCandles(request.symbol, request.timeframe, request.source)
+      .getCandles(request.symbol, request.timeframe)
       .then(({ candles, real }) => {
         if (live) setState((s) => ({ ...s, candles, real, loading: false }));
       })
@@ -106,7 +97,6 @@ export function useMarketData(
 
   const loadOlder = useCallback(() => {
     const req = requestRef.current;
-    if (req.source !== "live") return;
     if (inflightRef.current || backfill.exhausted || backfill.loading) return;
     const current = candlesRef.current;
     if (current.length === 0) return;
@@ -138,7 +128,6 @@ export function useMarketData(
   const loadWindow = useCallback(
     async (to: number): Promise<Candle[]> => {
       const req = requestRef.current;
-      if (req.source !== "live") return candlesRef.current;
       if (!Number.isFinite(to)) return candlesRef.current;
       const seq = (windowSeqRef.current += 1);
       inflightRef.current = true;
@@ -178,7 +167,7 @@ export function useMarketData(
   };
 }
 
-export function useLivePrice(symbol: Symbol, live = false): number | null {
+export function useLivePrice(symbol: Symbol): number | null {
   const [activeSymbol, setActiveSymbol] = useState(symbol);
   const [price, setPrice] = useState<number | null>(null);
 
@@ -188,8 +177,8 @@ export function useLivePrice(symbol: Symbol, live = false): number | null {
   }
 
   useEffect(() => {
-    return ws.subscribe(symbol, (tick) => setPrice(tick.price), { live });
-  }, [symbol, live]);
+    return ws.subscribe(symbol, (tick) => setPrice(tick.price));
+  }, [symbol]);
 
   return price;
 }

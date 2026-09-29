@@ -40,7 +40,17 @@ function countAtOrBefore(bars: Candle[], t: number): number {
   return lo;
 }
 
-export function ReplayBar({ bars }: { bars: Candle[] }) {
+export function ReplayBar({
+  bars,
+  loadWindow,
+  canJump,
+}: {
+  bars: Candle[];
+  /** Replace history with a window ending at `to` (live jump-to-date). */
+  loadWindow: (to: number) => Promise<Candle[]>;
+  /** False for fixed local sources (synthetic/bundled) — clamps as before. */
+  canJump: boolean;
+}) {
   const {
     replayActive,
     replayCutoff,
@@ -55,6 +65,7 @@ export function ReplayBar({ bars }: { bars: Candle[] }) {
   } = useTerminal();
 
   const [draft, setDraft] = useState<string | null>(null);
+  const [jumping, setJumping] = useState(false);
 
   // Default the picker to ~100 bars back; falls back live during render
   // (no effect) so data arriving later still seeds a sensible moment.
@@ -92,12 +103,30 @@ export function ReplayBar({ bars }: { bars: Candle[] }) {
   };
 
   if (!replayActive) {
-    const start = () => {
+    const start = async () => {
       const ts = fromLocalInput(draftValue);
-      if (ts === null || bars.length === 0) return;
+      if (ts === null || bars.length === 0 || jumping) return;
       const first = bars[0]!.time;
       const last = bars[bars.length - 1]!.time;
-      enterReplay(Math.min(Math.max(ts, first), last));
+      if (!canJump || (ts >= first && ts <= last)) {
+        enterReplay(Math.min(Math.max(ts, first), last));
+        return;
+      }
+      // Outside loaded history: fetch a window ending at the chosen moment,
+      // then enter there. Never blocks — failure falls back to the clamp.
+      setJumping(true);
+      try {
+        const window = await loadWindow(ts);
+        if (window.length > 0) {
+          const wFirst = window[0]!.time;
+          const wLast = window[window.length - 1]!.time;
+          enterReplay(Math.min(Math.max(ts, wFirst), wLast));
+        } else {
+          enterReplay(Math.min(Math.max(ts, first), last));
+        }
+      } finally {
+        setJumping(false);
+      }
     };
     return (
       <div className="flex items-center gap-2">
@@ -111,11 +140,11 @@ export function ReplayBar({ bars }: { bars: Candle[] }) {
         />
         <button
           type="button"
-          onClick={start}
-          disabled={bars.length === 0}
+          onClick={() => void start()}
+          disabled={bars.length === 0 || jumping}
           className="rounded bg-accent px-2.5 py-1 text-xs text-white hover:opacity-90 disabled:opacity-50"
         >
-          Start replay
+          {jumping ? "Loading…" : "Start replay"}
         </button>
         <span className="text-xs text-muted">
           Bars reveal from the chosen moment on every timeframe.

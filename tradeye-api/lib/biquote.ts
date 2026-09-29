@@ -1,7 +1,10 @@
 /**
  * Shared market-data helpers for the price endpoints. Upstream feed is
  * biquote.io (no key required; base URL overridable via BIQUOTE_BASE_URL).
+ * Biquote is the fallback feed — OANDA (lib/oanda.ts) is tried first.
  */
+import type { Candle, Quote } from "./types";
+import { FEED_TIMEOUT_MS } from "./types";
 
 export interface SymbolMeta {
   symbol: string;
@@ -89,7 +92,9 @@ export class UpstreamError extends Error {
 export async function fetchUpstream<T>(path: string): Promise<T> {
   let res: Response;
   try {
-    res = await fetch(`${biquoteBase()}${path}`);
+    res = await fetch(`${biquoteBase()}${path}`, {
+      signal: AbortSignal.timeout(FEED_TIMEOUT_MS),
+    });
   } catch {
     throw new UpstreamError("Price feed unreachable");
   }
@@ -112,18 +117,6 @@ export interface UpstreamBar {
   volume?: unknown;
   tickVolume?: unknown;
   isOpen?: unknown;
-}
-
-export interface Candle {
-  /** Unix seconds, ascending. */
-  time: number;
-  open: number;
-  high: number;
-  low: number;
-  close: number;
-  volume: number;
-  /** True for the still-forming bar. */
-  isOpen: boolean;
 }
 
 function isFiniteNumber(v: unknown): v is number {
@@ -166,4 +159,56 @@ export function toCandles(bars: UpstreamBar[]): Candle[] {
   }
   out.sort((a, b2) => a.time - b2.time);
   return out;
+}
+
+export type BiquoteRange = { limit: number } | { from: string; to: string };
+
+/** Biquote OHLC history + forming bar (fallback feed). */
+export async function biquoteCandles(
+  symbol: string,
+  interval: Interval,
+  range: BiquoteRange,
+): Promise<Candle[]> {
+  const query =
+    "limit" in range
+      ? `interval=${interval}&limit=${range.limit}`
+      : `interval=${interval}&from=${encodeURIComponent(range.from)}&to=${encodeURIComponent(range.to)}`;
+  const data = await fetchUpstream<{ bars?: unknown }>(`/api/${symbol}/ohlc?${query}`);
+  const bars = Array.isArray(data.bars) ? (data.bars as UpstreamBar[]) : [];
+  return toCandles(bars);
+}
+
+interface UpstreamQuote {
+  bid?: unknown;
+  ask?: unknown;
+  mid?: unknown;
+  timestamp?: unknown;
+  marketState?: unknown;
+}
+
+/** Biquote latest quote (fallback feed). */
+export async function biquoteQuote(symbol: string): Promise<Quote> {
+  const q = await fetchUpstream<UpstreamQuote>(`/api/${symbol}`);
+  const bid = typeof q.bid === "number" && Number.isFinite(q.bid) ? q.bid : null;
+  const ask = typeof q.ask === "number" && Number.isFinite(q.ask) ? q.ask : null;
+  const mid =
+    typeof q.mid === "number" && Number.isFinite(q.mid)
+      ? q.mid
+      : bid != null && ask != null
+        ? (bid + ask) / 2
+        : null;
+  const time =
+    typeof q.timestamp === "string" ? Math.floor(Date.parse(q.timestamp) / 1000) : NaN;
+  if (mid == null || !Number.isFinite(time)) {
+    throw new UpstreamError("Price feed returned invalid data");
+  }
+  return {
+    symbol,
+    bid,
+    ask,
+    mid,
+    price: mid,
+    time,
+    marketState: typeof q.marketState === "string" ? q.marketState : null,
+  };
 }

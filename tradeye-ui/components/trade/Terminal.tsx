@@ -78,7 +78,8 @@ export default function Terminal() {
     replayTime,
   } = useTerminalState();
   const livePrice = useLivePrice(symbol, dataSource === "live");
-  const { candles: fullCandles, real, loading } = useMarketData(symbol, timeframe, dataSource);
+  const { candles: fullCandles, real, loading, loadOlder, loadingOlder, olderExhausted, loadWindow } =
+    useMarketData(symbol, timeframe, dataSource);
   const symbolOptions = useSymbols(dataSource);
   const { drawings, addDrawing, updateDrawing, removeDrawing, undo, redo } =
     useChartDrawings(symbol);
@@ -105,6 +106,22 @@ export default function Terminal() {
     setFeedPaused(replayActive);
     return () => setFeedPaused(false);
   }, [replayActive]);
+
+  // Mid-replay timeframe switch: reload the new timeframe ending at the
+  // current replay moment instead of the latest window. Per-step replayTime
+  // advances must not refetch, so this keys off the timeframe transition.
+  const loadWindowRef = useRef(loadWindow);
+  useEffect(() => {
+    loadWindowRef.current = loadWindow;
+  });
+  const replayTfRef = useRef<{ tf: Timeframe; active: boolean }>({ tf: timeframe, active: replayActive });
+  useEffect(() => {
+    const prev = replayTfRef.current;
+    replayTfRef.current = { tf: timeframe, active: replayActive };
+    if (prev.tf !== timeframe && replayActive && replayTime != null && dataSource === "live") {
+      void loadWindowRef.current(replayTime);
+    }
+  });
 
   // Paper engine MtM + SL/TP on every live tick and every replay step.
   // Replay evaluates the full bar range; live ticks evaluate point prices.
@@ -199,7 +216,7 @@ export default function Terminal() {
 
   const caption =
     dataSource === "live"
-      ? "Live via Tradeye API (biquote.io)."
+      ? `Live via Tradeye API (biquote.io).${olderExhausted ? " Earliest available history reached." : ""}`
       : dataSource === "bundled" && real
         ? "Bundled real history — timestamps remapped to now."
         : dataSource === "bundled"
@@ -330,6 +347,9 @@ export default function Terminal() {
               accountEquity={equity}
               drawingCallbacks={callbacks}
               managerRef={managerRef}
+              onNeedOlder={dataSource === "live" ? loadOlder : null}
+              loadingOlder={loadingOlder}
+              olderExhausted={olderExhausted}
             />
             {selectedDrawing && (
               <DrawingFloatingToolbar
@@ -398,7 +418,11 @@ export default function Terminal() {
             aria-label="Replay controls"
             className="border-t border-border px-4 py-2"
           >
-            <ReplayBar bars={fullCandles} />
+            <ReplayBar
+              bars={fullCandles}
+              loadWindow={loadWindow}
+              canJump={dataSource === "live"}
+            />
           </div>
         </main>
         <aside

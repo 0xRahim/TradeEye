@@ -4,8 +4,10 @@ import { useEffect, useRef, useState, type RefObject } from "react";
 import {
   ColorType,
   CrosshairMode,
+  TickMarkType,
   type IChartApi,
   type ISeriesApi,
+  type Time,
   type UTCTimestamp,
 } from "lightweight-charts";
 import { createChart } from "lightweight-charts";
@@ -18,6 +20,7 @@ import type {
 } from "./drawings/constants";
 import { DRAWING_STYLES_EVENT, getStyleDefaults } from "./drawings/drawingStyles";
 import { DrawingToolsManager } from "./lib/chart-plugins/drawing-tools/manager";
+import { applyTick } from "./lib/candle-builder";
 import { SessionMarkersPrimitive } from "./indicators/session-markers-primitive";
 import { getSessionWindows } from "./indicators/sessions";
 import { useSessionSettings } from "./indicators/session-settings-store";
@@ -53,6 +56,11 @@ interface ChartPanelProps {
   drawingCallbacks: DrawingCallbacks;
   /** Terminal keeps the manager to drive external selection (object tree). */
   managerRef: RefObject<DrawingToolsManager | null>;
+  /** Scroll-left backfill request (null when the source can't backfill). */
+  onNeedOlder: (() => void) | null;
+  loadingOlder: boolean;
+  /** True when the feed has no older bars (end of upstream history). */
+  olderExhausted: boolean;
 }
 
 function precisionFor(candles: Candle[]): number {
@@ -115,6 +123,39 @@ function formatOhlc(symbol: string, bar: { open: number; high: number; low: numb
   return `${symbol}  O ${f(bar.open)}  H ${f(bar.high)}  L ${f(bar.low)}  C ${f(bar.close)}`;
 }
 
+/** IANA zone shared with the API's OANDA day-bucket alignment. */
+const UK_TZ = "Europe/London";
+
+const ukYearFmt = new Intl.DateTimeFormat("en-GB", { year: "numeric", timeZone: UK_TZ });
+const ukMonthFmt = new Intl.DateTimeFormat("en-GB", { month: "short", timeZone: UK_TZ });
+const ukDayFmt = new Intl.DateTimeFormat("en-GB", {
+  day: "numeric",
+  month: "short",
+  timeZone: UK_TZ,
+});
+const ukTimeFmt = new Intl.DateTimeFormat("en-GB", {
+  hour: "2-digit",
+  minute: "2-digit",
+  hour12: false,
+  timeZone: UK_TZ,
+});
+
+/** Time-axis (and crosshair) labels in UK time. */
+function ukTickMarkFormatter(time: Time, tickMarkType: TickMarkType): string | null {
+  if (typeof time !== "number") return null;
+  const d = new Date(time * 1000);
+  switch (tickMarkType) {
+    case TickMarkType.Year:
+      return ukYearFmt.format(d);
+    case TickMarkType.Month:
+      return ukMonthFmt.format(d);
+    case TickMarkType.DayOfMonth:
+      return ukDayFmt.format(d);
+    default:
+      return ukTimeFmt.format(d);
+  }
+}
+
 export default function ChartPanel({
   symbol,
   timeframe,
@@ -128,6 +169,9 @@ export default function ChartPanel({
   accountEquity,
   drawingCallbacks,
   managerRef,
+  onNeedOlder,
+  loadingOlder,
+  olderExhausted,
 }: ChartPanelProps) {
   const mountRef = useRef<HTMLDivElement>(null);
   const legendRef = useRef<HTMLDivElement>(null);
@@ -150,11 +194,26 @@ export default function ChartPanel({
    * Ref mirror for chart-event/effect reads; state drives the UI pill.
    */
   const FOLLOW_THRESHOLD_BARS = 5;
+  /** Fetch older history when the left viewport edge gets this close to bar 0. */
+  const BACKFILL_EDGE_BARS = 30;
   const [isFollowing, setIsFollowing] = useState(true);
   const isFollowingRef = useRef(true);
+  /** True while the viewport sits at the left (oldest) edge of history. */
+  const [atLeftEdge, setAtLeftEdge] = useState(false);
   const prevSymbolRef = useRef(symbol);
+  const prevTimeframeRef = useRef(timeframe);
   const prevFirstTimeRef = useRef<number | null>(null);
   const wasReplayActiveRef = useRef(replayActive);
+  // Latest values for the stable chart-event subscriber (avoids resubscribing
+  // without recreating the chart on every render).
+  const needOlderRef = useRef(onNeedOlder);
+  useEffect(() => {
+    needOlderRef.current = onNeedOlder;
+  });
+  const replayActiveRef = useRef(replayActive);
+  useEffect(() => {
+    replayActiveRef.current = replayActive;
+  });
 
   // Latest callbacks for the manager's stable proxies (avoids stale closures
   // without recreating the manager every render).
@@ -184,7 +243,13 @@ export default function ChartPanel({
       },
       crosshair: { mode: CrosshairMode.Normal },
       rightPriceScale: { borderColor: vars.border },
-      timeScale: { borderColor: vars.border, timeVisible: true },
+      // UK display time (matches the API's OANDA day-bucket alignment;
+      // lightweight-charts v4 has no timeZone option, so we format here).
+      timeScale: {
+        borderColor: vars.border,
+        timeVisible: true,
+        tickMarkFormatter: ukTickMarkFormatter,
+      },
     });
     chartRef.current = chart;
 
@@ -261,6 +326,15 @@ export default function ChartPanel({
       if (following !== isFollowingRef.current) {
         isFollowingRef.current = following;
         setIsFollowing(following);
+      }
+      // Scroll-left backfill: near the left edge with history loaded, ask
+      // for the next older chunk (disabled during replay).
+      const needOlder = needOlderRef.current;
+      const range = chart.timeScale().getVisibleLogicalRange();
+      const atEdge = range != null && range.from < BACKFILL_EDGE_BARS;
+      setAtLeftEdge((prev) => (prev === atEdge ? prev : atEdge));
+      if (needOlder && !replayActiveRef.current && barsRef.current.length > 0 && atEdge) {
+        needOlder();
       }
     };
     chart.timeScale().subscribeVisibleLogicalRangeChange(onVisibleRangeChange);
@@ -416,38 +490,59 @@ export default function ChartPanel({
       replayCountRef.current = candles.length;
     } else {
       replayCountRef.current = 0;
-      chart.timeScale().scrollToRealTime();
-      if (!isFollowingRef.current) {
-        isFollowingRef.current = true;
-        setIsFollowing(true);
+      const prepended =
+        !symbolChanged &&
+        prevTimeframeRef.current === timeframe &&
+        prevLen > 0 &&
+        prevFirstTime !== null &&
+        firstTime !== null &&
+        firstTime < prevFirstTime;
+      if (prepended && prevRange) {
+        // Backfill: same bars shifted right by the added count — hold the view.
+        const delta = candles.length - prevLen;
+        chart.timeScale().setVisibleLogicalRange({
+          from: prevRange.from + delta,
+          to: prevRange.to + delta,
+        });
+      } else {
+        chart.timeScale().scrollToRealTime();
+        if (!isFollowingRef.current) {
+          isFollowingRef.current = true;
+          setIsFollowing(true);
+        }
       }
     }
     prevSymbolRef.current = symbol;
+    prevTimeframeRef.current = timeframe;
     prevFirstTimeRef.current = firstTime;
     wasReplayActiveRef.current = replayActive;
-  }, [candles, symbol, replayActive]);
+  }, [candles, symbol, timeframe, replayActive]);
 
-  // Live tick: mutate the forming bar + move the price line.
+  // Live tick: advance the forming bar, printing a new candle when the
+  // timeframe bucket rolls over (bar math lives in lib/candle-builder).
   useEffect(() => {
     const candleSeries = candleSeriesRef.current;
+    const chart = chartRef.current;
     if (!candleSeries || livePrice === null) return;
-    const bars = barsRef.current;
-    const last = bars.at(-1);
-    if (!last) return;
-    const updated: Candle = {
-      ...last,
-      close: livePrice,
-      high: Math.max(last.high, livePrice),
-      low: Math.min(last.low, livePrice),
-    };
-    bars[bars.length - 1] = updated;
+    const applied = applyTick(
+      barsRef.current,
+      livePrice,
+      Date.now() / 1000,
+      TIMEFRAME_SECONDS[timeframe],
+    );
+    if (!applied) return;
     candleSeries.update({
-      time: updated.time as UTCTimestamp,
-      open: updated.open,
-      high: updated.high,
-      low: updated.low,
-      close: updated.close,
+      time: applied.bar.time as UTCTimestamp,
+      open: applied.bar.open,
+      high: applied.bar.high,
+      low: applied.bar.low,
+      close: applied.bar.close,
     });
+    const legend = legendRef.current;
+    if (legend) legend.textContent = formatOhlc(symbol, applied.bar);
+    if (applied.isNewBar && isFollowingRef.current && chart) {
+      chart.timeScale().scrollToRealTime();
+    }
     const vars = readVars();
     if (priceLineRef.current) {
       candleSeries.removePriceLine(priceLineRef.current);
@@ -460,7 +555,7 @@ export default function ChartPanel({
       axisLabelVisible: true,
       title: "",
     });
-  }, [livePrice]);
+  }, [livePrice, timeframe, symbol]);
 
   const goToLatest = () => {
     chartRef.current?.timeScale().scrollToRealTime();
@@ -488,6 +583,26 @@ export default function ChartPanel({
           Go to latest
         </button>
       )}
+      {loadingOlder && !replayActive && (
+        <div
+          role="status"
+          className="absolute bottom-3 left-3 z-10 rounded-md border border-border bg-surface px-2.5 py-1 font-mono text-xs text-muted shadow-xl"
+        >
+          Loading older bars…
+        </div>
+      )}
+      {!loadingOlder &&
+        olderExhausted &&
+        onNeedOlder &&
+        !replayActive &&
+        atLeftEdge && (
+          <div
+            role="status"
+            className="absolute bottom-3 left-3 z-10 rounded-md border border-border bg-surface px-2.5 py-1 font-mono text-xs text-muted shadow-xl"
+          >
+            No older history available
+          </div>
+        )}
     </div>
   );
 }

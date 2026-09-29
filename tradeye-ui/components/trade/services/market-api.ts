@@ -120,7 +120,7 @@ function toCandle(b: RawCandle): Candle | null {
   };
 }
 
-/** History for chart + backtesting. `limit` bars ending at now (default 500). */
+/** History for chart + backtesting. `limit` bars ending at now (default 1000). */
 export async function fetchCandles(
   symbol: Symbol,
   interval: Timeframe,
@@ -131,7 +131,7 @@ export async function fetchCandles(
     params.set("from", opts.from);
     params.set("to", opts.to);
   } else {
-    params.set("limit", String(opts?.limit ?? 500));
+    params.set("limit", String(opts?.limit ?? 1000));
   }
   const body = (await getJson(`/api/candles?${params.toString()}`)) as {
     candles?: unknown;

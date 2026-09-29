@@ -1,14 +1,11 @@
 import {
-  UpstreamError,
-  fetchUpstream,
   handleOptions,
   isSupportedInterval,
   json,
   jsonError,
   normalizeSymbol,
-  toCandles,
-  type UpstreamBar,
 } from "../lib/biquote";
+import { feedError, getCandles } from "../lib/feed";
 
 export const config = { runtime: "edge" };
 
@@ -30,7 +27,8 @@ function parseBound(raw: string | null): string | null {
 }
 
 /**
- * OHLC history + forming bar for backtesting and live charts:
+ * OHLC history + forming bar for backtesting and live charts.
+ * OANDA first, biquote fallback. Day/week buckets align to UK time.
  * GET /api/candles?symbol=BTCUSD&interval=1h&limit=500
  * GET /api/candles?symbol=EURUSD&interval=1d&from=2026-01-01T00:00:00Z&to=2026-09-01T00:00:00Z
  */
@@ -67,24 +65,19 @@ export default async function handler(req: Request): Promise<Response> {
     return jsonError("Invalid limit.", 400);
   }
 
-  const query =
-    from && to
-      ? `interval=${intervalRaw}&from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`
-      : `interval=${intervalRaw}&limit=${limit}`;
-
   try {
-    const data = await fetchUpstream<{ bars?: unknown }>(
-      `/api/${symbol}/ohlc?${query}`,
+    const { candles, feed } = await getCandles(
+      symbol,
+      intervalRaw,
+      from && to ? { from, to } : { limit },
     );
-    const bars = Array.isArray(data.bars) ? (data.bars as UpstreamBar[]) : [];
-    const candles = toCandles(bars);
     return json(
-      { symbol, interval: intervalRaw, candles },
+      { symbol, interval: intervalRaw, candles, feed },
       200,
       "public, s-maxage=60, stale-while-revalidate=300",
     );
   } catch (err) {
-    if (err instanceof UpstreamError) return jsonError(err.message, err.status);
-    return jsonError("Price feed error", 502);
+    const { message, status } = feedError(err);
+    return jsonError(message, status);
   }
 }

@@ -101,7 +101,6 @@ export default function ChartPanel({
   const legendRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const candleSeriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
-  const volumeSeriesRef = useRef<ISeriesApi<"Histogram"> | null>(null);
   const managerLocalRef = useRef<DrawingToolsManager | null>(null);
   const priceLineRef = useRef<ReturnType<
     ISeriesApi<"Candlestick">["createPriceLine"]
@@ -159,14 +158,7 @@ export default function ChartPanel({
 
     const candleSeries = chart.addCandlestickSeries({ priceScaleId: "right" });
     candleSeriesRef.current = candleSeries;
-    chart.priceScale("right").applyOptions({ scaleMargins: { top: 0.06, bottom: 0.25 } });
-
-    const volumeSeries = chart.addHistogramSeries({
-      priceScaleId: "",
-      priceFormat: { type: "volume" },
-    });
-    volumeSeriesRef.current = volumeSeries;
-    chart.priceScale("").applyOptions({ scaleMargins: { top: 0.85, bottom: 0 } });
+    chart.priceScale("right").applyOptions({ scaleMargins: { top: 0.06, bottom: 0.1 } });
 
     const manager = new DrawingToolsManager({
       chart,
@@ -254,13 +246,6 @@ export default function ChartPanel({
         timeScale: { borderColor: v.border },
       });
       candleSeries.applyOptions({ upColor: v.up, downColor: v.down });
-      volumeSeries.setData(
-        barsRef.current.map((b) => ({
-          time: b.time as UTCTimestamp,
-          value: b.volume,
-          color: b.close >= b.open ? v.up : v.down,
-        })),
-      );
     });
     themeObs.observe(document.documentElement, { attributes: true });
 
@@ -282,7 +267,6 @@ export default function ChartPanel({
       chart.remove();
       chartRef.current = null;
       candleSeriesRef.current = null;
-      volumeSeriesRef.current = null;
       priceLineRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -331,9 +315,8 @@ export default function ChartPanel({
   // Push full series on symbol/timeframe/data change.
   useEffect(() => {
     const candleSeries = candleSeriesRef.current;
-    const volumeSeries = volumeSeriesRef.current;
     const chart = chartRef.current;
-    if (!candleSeries || !volumeSeries || !chart) return;
+    if (!candleSeries || !chart) return;
 
     // Snapshot viewport + data shape BEFORE replacing the series so replay
     // can shift (not reset) the visible range and hold a user-dragged offset.
@@ -363,13 +346,6 @@ export default function ChartPanel({
         high: b.high,
         low: b.low,
         close: b.close,
-      })),
-    );
-    volumeSeries.setData(
-      candles.map((b) => ({
-        time: b.time as UTCTimestamp,
-        value: b.volume,
-        color: b.close >= b.open ? vars.up : vars.down,
       })),
     );
     if (priceLineRef.current) {

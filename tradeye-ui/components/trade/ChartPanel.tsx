@@ -311,6 +311,7 @@ export default function ChartPanel({
       return;
     }
     prim.setShowLabels(sessionSettings.showLabels);
+    prim.setIntervalSec(TIMEFRAME_SECONDS[timeframe]);
     prim.setWindows(getSessionWindows(candles, sessionSettings));
   }, [candles, timeframe, sessionSettings]);
 

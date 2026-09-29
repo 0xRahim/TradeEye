@@ -12,9 +12,9 @@ import type { CanvasRenderingTarget2D } from "fancy-canvas";
 import type {
   ISeriesPrimitivePaneRenderer,
   ISeriesPrimitivePaneView,
-  Time,
 } from "lightweight-charts";
 import { PluginBase } from "../lib/chart-plugins/plugin-base";
+import { makeResolveCtx, timeToX } from "../lib/chart-plugins/drawing-tools/resolve";
 import type { SessionBorderStyle, SessionWindow } from "./sessions";
 
 interface ResolvedBox {
@@ -107,11 +107,20 @@ class SessionMarkersPaneView implements ISeriesPrimitivePaneView {
   }
 
   update(): void {
-    const timeScale = this._source.chart.timeScale();
+    // Session edges rarely sit on this TF's bar grid (aggregated TFs stamp
+    // bars at group opens offset from wall-clock hours), and
+    // `timeToCoordinate` returns null for off-grid times. Use the shared
+    // `timeToX` resolver (same as drawings): direct mapping when exact,
+    // logical-index interpolation otherwise.
+    const ctx = makeResolveCtx(
+      this._source.chart,
+      this._source.series,
+      this._source.intervalSec(),
+    );
     const series = this._source.series;
     this._boxes = this._source.windows().map((w) => ({
-      x1: timeScale.timeToCoordinate(w.startTime as Time),
-      x2: timeScale.timeToCoordinate(w.endTime as Time),
+      x1: timeToX(ctx, w.startTime),
+      x2: timeToX(ctx, w.endTime),
       yHigh: series.priceToCoordinate(w.high),
       yLow: series.priceToCoordinate(w.low),
       label: w.label,
@@ -131,11 +140,23 @@ class SessionMarkersPaneView implements ISeriesPrimitivePaneView {
 export class SessionMarkersPrimitive extends PluginBase {
   private _windows: SessionWindow[] = [];
   private _showLabels = true;
+  private _intervalSec = 60;
   private readonly _paneViews: SessionMarkersPaneView[];
 
   constructor() {
     super();
     this._paneViews = [new SessionMarkersPaneView(this)];
+  }
+
+  /** Bar interval of the series data — drives off-grid time interpolation. */
+  setIntervalSec(intervalSec: number): void {
+    if (this._intervalSec === intervalSec) return;
+    this._intervalSec = intervalSec;
+    this.requestUpdate();
+  }
+
+  intervalSec(): number {
+    return this._intervalSec;
   }
 
   setWindows(windows: SessionWindow[]): void {

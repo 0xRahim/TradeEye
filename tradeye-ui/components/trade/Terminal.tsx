@@ -1,6 +1,6 @@
 "use client";
 
-import { Bell, List, Redo2, Undo2 } from "lucide-react";
+import { Bell, Clock, List, Redo2, Undo2 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTerminal as useTerminalState } from "./store";
 import ChartPanel, { type DrawingCallbacks } from "./ChartPanel";
@@ -10,6 +10,8 @@ import { ReplayBar } from "./ReplayBar";
 import { DrawingContextMenu, DrawingFloatingToolbar, DrawingSettingsDialog } from "./DrawingsOverlay";
 import { DrawingToolRail } from "./DrawingToolRail";
 import { ObjectTreePanel } from "./ObjectTreePanel";
+import { SessionMarkersDialog } from "./SessionMarkersDialog";
+import { useSessionSettings } from "./indicators/session-settings-store";
 import { ThemeToggle } from "./ThemeToggle";
 import { SYMBOLS, TIMEFRAMES, TIMEFRAME_SECONDS, type Symbol, type Timeframe } from "./constants";
 import type { DrawingLine, DrawingTool, MagnetMode } from "./drawings/constants";
@@ -117,6 +119,8 @@ export default function Terminal() {
   const [settingsId, setSettingsId] = useState<string | null>(null);
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [treeOpen, setTreeOpen] = useState(false);
+  const [sessionsOpen, setSessionsOpen] = useState(false);
+  const sessionsEnabled = useSessionSettings((s) => s.enabled);
   const managerRef = useRef<DrawingToolsManager | null>(null);
 
   // Reset tool + selection + panels when the symbol changes (manager is
@@ -280,6 +284,18 @@ export default function Terminal() {
             >
               <List className="h-4 w-4" />
             </button>
+            <button
+              type="button"
+              title="Session Markers settings"
+              aria-label="Toggle session markers settings"
+              onClick={() => setSessionsOpen((o) => !o)}
+              className={cx(
+                "rounded p-1.5 hover:bg-border/50 hover:text-foreground",
+                sessionsOpen || sessionsEnabled ? "text-accent" : "text-muted",
+              )}
+            >
+              <Clock className="h-4 w-4" />
+            </button>
             {tool !== "none" && (
               <span className="ml-2 text-xs text-muted">
                 Placing {tool} — click / drag on the chart, Esc to cancel
@@ -319,6 +335,7 @@ export default function Terminal() {
                 onClose={() => setSettingsId(null)}
               />
             )}
+            {sessionsOpen && <SessionMarkersDialog onClose={() => setSessionsOpen(false)} />}
             {menuDrawing && menu && (
               <DrawingContextMenu
                 drawing={menuDrawing}

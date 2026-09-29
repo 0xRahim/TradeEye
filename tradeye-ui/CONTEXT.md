@@ -48,6 +48,12 @@ API code later. The landing page (`app/page.tsx`) is stock create-next-app.
   context menu), `ObjectTreePanel`, `ReplayBar`, `OrderTicket`,
   `PositionsPanel`; hooks `useMarketData`, `useChartDrawings` (100-step
   undo/redo), `useLineAlerts`; `ThemeToggle` + `theme-script.ts`.
+- Indicators (`indicators/`): `sessions.ts` is pure session-window math
+  (UK wall-clock, no chart calls); `session-markers-primitive.ts` extends
+  the vendored `PluginBase` and paints in `drawBackground` (OpenCharts §8
+  pattern); `session-settings-store.ts` holds global settings persisted to
+  `localStorage` (`oc_session_markers_v1`). `ChartPanel` owns the primitive
+  lifecycle; `SessionMarkersDialog` (toolbar Clock button) edits settings.
 
 ## 4. Constraints that break things if ignored
 

@@ -76,7 +76,7 @@ export default function Terminal() {
     replayTime,
   } = useTerminalState();
   const livePrice = useLivePrice(symbol);
-  const { candles: fullCandles, loading, loadOlder, loadingOlder, olderExhausted, loadWindow } =
+  const { candles: fullCandles, loading, loadOlder, loadingOlder, olderExhausted, loadReplayWindow, loadLatest } =
     useMarketData(symbol, timeframe);
   const symbolOptions = useSymbols();
   const { drawings, addDrawing, updateDrawing, removeDrawing, undo, redo } =
@@ -105,19 +105,20 @@ export default function Terminal() {
     return () => setFeedPaused(false);
   }, [replayActive]);
 
-  // Mid-replay timeframe switch: reload the new timeframe ending at the
-  // current replay moment instead of the latest window. Per-step replayTime
-  // advances must not refetch, so this keys off the timeframe transition.
-  const loadWindowRef = useRef(loadWindow);
+  // Mid-replay timeframe switch: reload the new timeframe around the
+  // current replay moment (left context + pre-loaded future) instead of
+  // the latest window. Per-step replayTime advances must not refetch, so
+  // this keys off the timeframe transition.
+  const loadReplayWindowRef = useRef(loadReplayWindow);
   useEffect(() => {
-    loadWindowRef.current = loadWindow;
+    loadReplayWindowRef.current = loadReplayWindow;
   });
   const replayTfRef = useRef<{ tf: Timeframe; active: boolean }>({ tf: timeframe, active: replayActive });
   useEffect(() => {
     const prev = replayTfRef.current;
     replayTfRef.current = { tf: timeframe, active: replayActive };
     if (prev.tf !== timeframe && replayActive && replayTime != null) {
-      void loadWindowRef.current(replayTime);
+      void loadReplayWindowRef.current(replayTime);
     }
   });
 
@@ -402,7 +403,8 @@ export default function Terminal() {
           >
             <ReplayBar
               bars={fullCandles}
-              loadWindow={loadWindow}
+              loadReplayWindow={loadReplayWindow}
+              loadLatest={loadLatest}
             />
           </div>
         </main>

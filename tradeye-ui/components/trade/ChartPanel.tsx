@@ -210,10 +210,6 @@ export default function ChartPanel({
   useEffect(() => {
     needOlderRef.current = onNeedOlder;
   });
-  const replayActiveRef = useRef(replayActive);
-  useEffect(() => {
-    replayActiveRef.current = replayActive;
-  });
 
   // Latest callbacks for the manager's stable proxies (avoids stale closures
   // without recreating the manager every render).
@@ -328,12 +324,13 @@ export default function ChartPanel({
         setIsFollowing(following);
       }
       // Scroll-left backfill: near the left edge with history loaded, ask
-      // for the next older chunk (disabled during replay).
+      // for the next older chunk. Allowed during replay so left context
+      // keeps loading; the revealed future stays pre-loaded underneath.
       const needOlder = needOlderRef.current;
       const range = chart.timeScale().getVisibleLogicalRange();
       const atEdge = range != null && range.from < BACKFILL_EDGE_BARS;
       setAtLeftEdge((prev) => (prev === atEdge ? prev : atEdge));
-      if (needOlder && !replayActiveRef.current && barsRef.current.length > 0 && atEdge) {
+      if (needOlder && barsRef.current.length > 0 && atEdge) {
         needOlder();
       }
     };
@@ -461,7 +458,24 @@ export default function ChartPanel({
       // by exactly the new-bar count so a last candle parked mid-screen
       // stays mid-screen. Never scrollToRealTime here — that pins the last
       // bar to the right edge and wipes the user's placement.
-      if (justEnteredReplay || symbolChanged || dataReset || replayCountRef.current === 0) {
+      const prependedOlder =
+        !symbolChanged &&
+        !justEnteredReplay &&
+        prevLen > 0 &&
+        prevFirstTime !== null &&
+        firstTime !== null &&
+        firstTime < prevFirstTime;
+      if (prependedOlder && prevRange) {
+        // Scroll-left backfill mid-replay: older bars shifted everything
+        // right — hold the view instead of snapping to the latest bar.
+        const delta = candles.length - prevLen;
+        if (delta > 0) {
+          chart.timeScale().setVisibleLogicalRange({
+            from: prevRange.from + delta,
+            to: prevRange.to + delta,
+          });
+        }
+      } else if (justEnteredReplay || symbolChanged || dataReset || replayCountRef.current === 0) {
         // Fresh baseline only (enter replay / symbol / timeframe switch).
         chart.timeScale().scrollToRealTime();
         isFollowingRef.current = true;
@@ -583,7 +597,7 @@ export default function ChartPanel({
           Go to latest
         </button>
       )}
-      {loadingOlder && !replayActive && (
+      {loadingOlder && (
         <div
           role="status"
           className="absolute bottom-3 left-3 z-10 rounded-md border border-border bg-surface px-2.5 py-1 font-mono text-xs text-muted shadow-xl"
@@ -591,11 +605,7 @@ export default function ChartPanel({
           Loading older bars…
         </div>
       )}
-      {!loadingOlder &&
-        olderExhausted &&
-        onNeedOlder &&
-        !replayActive &&
-        atLeftEdge && (
+      {!loadingOlder && olderExhausted && onNeedOlder && atLeftEdge && (
           <div
             role="status"
             className="absolute bottom-3 left-3 z-10 rounded-md border border-border bg-surface px-2.5 py-1 font-mono text-xs text-muted shadow-xl"

@@ -4,11 +4,21 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { TIMEFRAME_SECONDS, type Symbol, type Timeframe } from "../constants";
 import { api } from "../services/api";
 import { ws } from "../services/ws";
-import { mergeCandles } from "../lib/candle-builder";
+import { bucketTime, mergeCandles } from "../lib/candle-builder";
 import type { Candle } from "../services/types";
 
 /** Bars per scroll-left backfill fetch (matches the initial load size). */
 export const BACKFILL_CHUNK = 1000;
+
+/** Replay window shape: left context + pre-loaded future for stepping. */
+export const REPLAY_LOOKBACK_BARS = 300;
+export const REPLAY_LOOKAHEAD_BARS = 700;
+
+export interface ReplayWindow {
+  candles: Candle[];
+  /** Snapped replay start (a real bar time), or null when nothing loaded. */
+  startTime: number | null;
+}
 
 export interface MarketData {
   candles: Candle[];
@@ -26,6 +36,15 @@ export interface MarketData {
    * Never rejects — failure resolves with the current candles.
    */
   loadWindow: (to: number) => Promise<Candle[]>;
+  /**
+   * Two-sided replay window around `anchor`: LOOKBACK bars before (left
+   * context) + LOOKAHEAD bars after (pre-loaded future for stepping),
+   * forward leg capped at now. Resolves with the merged candles and the
+   * snapped start bar time. Never rejects.
+   */
+  loadReplayWindow: (anchor: number) => Promise<ReplayWindow>;
+  /** Reload the latest live window (used when exiting replay / Go live). */
+  loadLatest: () => Promise<Candle[]>;
 }
 
 interface Request {
@@ -41,6 +60,8 @@ const EMPTY: MarketData = {
   loadingOlder: false,
   olderExhausted: false,
   loadWindow: () => Promise.resolve([]),
+  loadReplayWindow: () => Promise.resolve({ candles: [], startTime: null }),
+  loadLatest: () => Promise.resolve([]),
 };
 
 interface BackfillState {
@@ -158,12 +179,104 @@ export function useMarketData(symbol: Symbol, timeframe: Timeframe): MarketData 
     [],
   );
 
+  const loadReplayWindow = useCallback(
+    async (anchor: number): Promise<ReplayWindow> => {
+      const req = requestRef.current;
+      if (!Number.isFinite(anchor)) {
+        return { candles: candlesRef.current, startTime: null };
+      }
+      const seq = (windowSeqRef.current += 1);
+      inflightRef.current = true;
+      setBackfill((b) => ({ ...b, loading: true }));
+      const intervalSec = TIMEFRAME_SECONDS[req.timeframe];
+      const nowSec = Math.floor(Date.now() / 1000);
+      const snapped = bucketTime(Math.floor(anchor), intervalSec);
+      const clampedAnchor = Math.min(snapped, bucketTime(nowSec, intervalSec));
+      const backStart = clampedAnchor - REPLAY_LOOKBACK_BARS * intervalSec;
+      try {
+        const back = await api.getOlderCandles(req.symbol, req.timeframe, {
+          from: new Date(backStart * 1000).toISOString(),
+          to: new Date(clampedAnchor * 1000).toISOString(),
+        });
+        if (requestRef.current !== req || windowSeqRef.current !== seq) {
+          return { candles: candlesRef.current, startTime: null }; // stale
+        }
+        let merged = mergeCandles([], back);
+        // Forward leg: bars strictly after the anchor, capped at now so a
+        // future pick doesn't request an empty/future window.
+        const fwdFrom = clampedAnchor + 1;
+        const fwdTo = Math.min(
+          clampedAnchor + REPLAY_LOOKAHEAD_BARS * intervalSec,
+          nowSec,
+        );
+        if (fwdFrom <= fwdTo) {
+          try {
+            const fwd = await api.getOlderCandles(req.symbol, req.timeframe, {
+              from: new Date(fwdFrom * 1000).toISOString(),
+              to: new Date(fwdTo * 1000).toISOString(),
+            });
+            if (requestRef.current !== req || windowSeqRef.current !== seq) {
+              return { candles: candlesRef.current, startTime: null };
+            }
+            merged = mergeCandles(merged, fwd);
+          } catch {
+            // Forward leg is best-effort; back context alone still replays.
+          }
+        }
+        if (merged.length === 0) {
+          return { candles: candlesRef.current, startTime: null };
+        }
+        setState((s) => ({ ...s, candles: merged, real: true, loading: false }));
+        // Fresh window — older history may still exist left of it until a
+        // scroll-left backfill proves exhaustion.
+        setBackfill({ loading: false, exhausted: false });
+        const first = merged[0]!.time;
+        const last = merged[merged.length - 1]!.time;
+        const startTime = Math.min(Math.max(clampedAnchor, first), last);
+        return { candles: merged, startTime };
+      } catch {
+        return { candles: candlesRef.current, startTime: null };
+      } finally {
+        inflightRef.current = false;
+        if (requestRef.current === req && windowSeqRef.current === seq) {
+          setBackfill((b) => ({ ...b, loading: false }));
+        }
+      }
+    },
+    [],
+  );
+
+  const loadLatest = useCallback(async (): Promise<Candle[]> => {
+    const req = requestRef.current;
+    const seq = (windowSeqRef.current += 1);
+    inflightRef.current = true;
+    setBackfill((b) => ({ ...b, loading: true }));
+    try {
+      const { candles } = await api.getCandles(req.symbol, req.timeframe);
+      if (requestRef.current !== req || windowSeqRef.current !== seq) {
+        return candlesRef.current; // stale (inputs changed / superseded)
+      }
+      setState((s) => ({ ...s, candles, real: true, loading: false }));
+      setBackfill({ loading: false, exhausted: false });
+      return candles;
+    } catch {
+      return candlesRef.current;
+    } finally {
+      inflightRef.current = false;
+      if (requestRef.current === req && windowSeqRef.current === seq) {
+        setBackfill((b) => ({ ...b, loading: false }));
+      }
+    }
+  }, []);
+
   return {
     ...state,
     loadOlder,
     loadingOlder: backfill.loading,
     olderExhausted: backfill.exhausted,
     loadWindow,
+    loadReplayWindow,
+    loadLatest,
   };
 }
 

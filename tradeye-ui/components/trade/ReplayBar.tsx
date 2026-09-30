@@ -42,11 +42,17 @@ function countAtOrBefore(bars: Candle[], t: number): number {
 
 export function ReplayBar({
   bars,
-  loadWindow,
+  loadReplayWindow,
+  loadLatest,
 }: {
   bars: Candle[];
-  /** Replace history with a window ending at `to` (jump-to-date). */
-  loadWindow: (to: number) => Promise<Candle[]>;
+  /** Load a two-sided window around the anchor for replay jumps. */
+  loadReplayWindow: (anchor: number) => Promise<{
+    candles: Candle[];
+    startTime: number | null;
+  }>;
+  /** Reload the latest live window (Go live). */
+  loadLatest: () => Promise<Candle[]>;
 }) {
   const {
     replayActive,
@@ -105,21 +111,32 @@ export function ReplayBar({
       if (ts === null || bars.length === 0 || jumping) return;
       const first = bars[0]!.time;
       const last = bars[bars.length - 1]!.time;
-      if (ts >= first && ts <= last) {
-        enterReplay(ts);
+      // Future pick: clamp to the live head instead of fetching an
+      // empty/future window.
+      if (ts > Math.floor(Date.now() / 1000)) {
+        enterReplay(last);
         return;
       }
-      // Outside loaded history: fetch a window ending at the chosen moment,
-      // then enter there. Never blocks — failure falls back to the clamp.
+      if (ts >= first && ts <= last) {
+        // Snap minute-precision input down to a real bar time so the
+        // chosen moment is the start bar, not an off-by-one bucket.
+        const idx = countAtOrBefore(bars, ts);
+        enterReplay(idx === 0 ? first : bars[idx - 1]!.time);
+        return;
+      }
+      // Outside loaded history: fetch left context + pre-loaded future
+      // around the chosen moment, then enter at the interior anchor so
+      // stepping forward has room. Failure falls back to the clamp.
       setJumping(true);
       try {
-        const window = await loadWindow(ts);
-        if (window.length > 0) {
-          const wFirst = window[0]!.time;
-          const wLast = window[window.length - 1]!.time;
-          enterReplay(Math.min(Math.max(ts, wFirst), wLast));
+        const { candles: win, startTime } = await loadReplayWindow(ts);
+        if (win.length > 0 && startTime != null) {
+          enterReplay(startTime);
         } else {
-          enterReplay(Math.min(Math.max(ts, first), last));
+          const idx = countAtOrBefore(bars, ts);
+          if (idx === 0) enterReplay(first);
+          else if (idx >= bars.length) enterReplay(last);
+          else enterReplay(bars[idx - 1]!.time);
         }
       } finally {
         setJumping(false);
@@ -214,7 +231,12 @@ export function ReplayBar({
       </span>
       <button
         type="button"
-        onClick={exitReplay}
+        onClick={() => {
+          // Go live exits the backtest session; reload the latest live
+          // window since replay replaced history.
+          exitReplay();
+          void loadLatest();
+        }}
         className={cx(
           "ml-auto flex items-center gap-1.5 rounded border border-border px-2.5 py-1 text-xs",
           "hover:bg-border/50",
